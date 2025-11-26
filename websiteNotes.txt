@@ -1,0 +1,21 @@
+GearShare website notes:
+
+added image - doesn't show anything
+
+creating filters in the search category
+
+still need to be able to take pictures to document Pickup condition
+
+making sure that once an item is rented, it is removed from the market
+
+how to return gear once it's the borrowing period has ended
+
+tabs 'Lend Gear', 'My Rentals', and 'My Listings' dont work
+
+Deposit Amount - unsure of what to do with this. currently, user listing item can change this.
+
+When listing in Lend Gear, image doesn't appear. Noteworthy, price doesn't show (might not be a big deal if we show it in the Browse Gear tab.
+ - when listing gear, the item doesn't appear in the Browse Gear Tab.
+ - a potential solution could be linking our gear_image table in supabase correctly?
+ - when listing user should be able to select the dates they plan on lending, this should also be reflected in the Browse Gear section too.
+

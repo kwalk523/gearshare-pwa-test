@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Gear Share Prototype Simulation</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+
+    <!-- Web App Manifest (required for PWA install) -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme color for address bar styling -->
+    <meta name="theme-color" content="#ffffff" />
+
+    <!-- Mobile PWA support -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Gear Share" />
+
+    <!-- Touch icons -->
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png" />
+
+    <!-- Add any SEO tags here later -->
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <!-- Main React entry -->
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- Register service worker (required for installability) -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then(() => console.log("Service worker registered"))
+            .catch((err) => console.error("Service worker registration failed:", err));
+        });
+      }
+    </script>
+  </body>
+</html>
+
+
