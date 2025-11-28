@@ -308,7 +308,7 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
     // Fetch rental details for notifications (e.g., renter_id, owner_id, gear title)
     const { data: rentalData, error: rentalError } = await supabase
       .from('rental_requests')
-      .select('renter_id, gear_owner_id, gear_title, location, return_time')
+      .select('renter_id, gear_owner_id, gear_title, gear_id, location, return_time')
       .eq('id', rentalId)
       .single();
 
@@ -347,6 +347,17 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
 
     if (notifError) {
       console.error('Failed to insert notifications:', notifError);
+    }
+
+    // If no damage, mark the gear listing as available again so others can rent it
+    if (!hasDamage && rentalData?.gear_id) {
+      const { error: makeAvailError } = await supabase
+        .from('gear_listings')
+        .update({ is_available: true })
+        .eq('id', rentalData.gear_id);
+      if (makeAvailError) {
+        console.error('Failed to mark gear available after return:', makeAvailError);
+      }
     }
 
     // Refresh both lender and borrower rentals to reflect updated status
