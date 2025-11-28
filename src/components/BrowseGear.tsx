@@ -6,6 +6,7 @@ import { supabase, GearListing } from '../lib/supabase';
 import { Search, MapPin, Shield, Star, X, Heart } from 'lucide-react';
 import LoadingSkeleton from './LoadingSkeleton';
 import { useFavorites } from '../hooks/useFavorites';
+import ListingModal from './ListingModal';
 
 type BrowseGearProps = {
   onRentItem?: (item: GearListing) => void;
@@ -34,6 +35,8 @@ export default function BrowseGear({ onRentItem, useMockData = false }: BrowseGe
   const [sortBy, setSortBy] = useState<'newest' | 'highest-rated' | 'lowest-price' | 'highest-price' | 'soonest-available'>('newest');
   
   const { toggleFavorite, isFavorited } = useFavorites();
+
+  const [selectedListing, setSelectedListing] = useState<GearListing | null>(null);
 
   const categories = ['All', 'Cameras', 'Lighting', 'Tripods', 'Drones', 'Audio', 'Gaming', 'Other'];
 
@@ -159,7 +162,14 @@ export default function BrowseGear({ onRentItem, useMockData = false }: BrowseGe
       ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredGear.map(item => (
-          <div key={item.id} className="card-dark-elevated p-4 flex flex-col rounded-xl shadow-md hover:shadow-lg transition-shadow">
+          <div
+            key={item.id}
+            onClick={() => setSelectedListing(item)}
+            role="button"
+            tabIndex={0}
+            className="card-dark-elevated p-4 flex flex-col rounded-xl shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedListing(item); }}
+          >
             <div className="relative aspect-video w-full overflow-hidden rounded-lg mb-3">
               <img src={item.image_url || '/placeholder.png'} alt={item.title} loading="lazy" className="w-full h-full object-cover" />
               <div className="absolute top-2 right-2 bg-emerald-600 text-white px-2 py-0.5 rounded text-xs font-semibold capitalize">{item.condition}</div>
@@ -207,7 +217,7 @@ export default function BrowseGear({ onRentItem, useMockData = false }: BrowseGe
               <Shield className="w-3 h-3 mr-1" /> ${item.deposit_amount} deposit
             </div>
             {onRentItem && item.is_available ? (
-              <button onClick={() => onRentItem(item)} className="btn btn-press w-full bg-emerald-600 text-white py-3 rounded-lg font-medium hover:bg-emerald-700 transition-all duration-200 shadow-md hover:shadow-lg touch-target">
+              <button onClick={(e) => { e.stopPropagation(); onRentItem(item); }} className="btn btn-press w-full bg-emerald-600 text-white py-3 rounded-lg font-medium hover:bg-emerald-700 transition-all duration-200 shadow-md hover:shadow-lg touch-target">
                 Check Available Dates
               </button>
             ) : (
@@ -218,6 +228,9 @@ export default function BrowseGear({ onRentItem, useMockData = false }: BrowseGe
           </div>
         ))}
       </div>
+      )}
+      {selectedListing && (
+        <ListingModal listing={selectedListing} onClose={() => setSelectedListing(null)} onCheckDates={onRentItem} />
       )}
       {!loading && filteredGear.length === 0 && (
         <div className="text-center py-12">
