@@ -106,6 +106,7 @@ export default function MyRentals({
   perspectiveOverride,
   borrowingStatusOverride,
   lendingStatusOverride,
+  openReview = null,
 }: MyRentalsProps) {
   const { user: profileUser, loading: userLoading } = useUser();
   const user = useMemo(
