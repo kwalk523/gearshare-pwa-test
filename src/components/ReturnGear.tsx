@@ -326,7 +326,8 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
         message: hasDamage
           ? `Your return of ${rentalData.gear_title} was flagged for damage and is in dispute.`
           : `Your return of ${rentalData.gear_title} is complete. Your deposit will be returned shortly.`,
-        link: '/browse',
+        // Prompt renter to leave a review for the lender
+        link: `/rent?tab=completed&openReview=${rentalId}&reviewFor=lender`,
         related_id: rentalId,
         is_read: false,
       },
@@ -337,7 +338,8 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
         message: hasDamage
           ? `${rentalData.gear_title} return was flagged for damage and requires your review.`
           : `${rentalData.gear_title} return is complete and deposit will be processed.`,
-        link: '/rent', // or lender dashboard link
+        // Prompt owner (lender) to leave a review for the borrower
+        link: `/rent?tab=completed&openReview=${rentalId}&reviewFor=borrower`,
         related_id: rentalId,
         is_read: false,
       },

@@ -49,6 +49,11 @@ type MyRentalsProps = {
   perspectiveOverride?: 'borrowing' | 'lending';
   borrowingStatusOverride?: 'pending' | 'active' | 'completed';
   lendingStatusOverride?: 'pending' | 'active' | 'completed';
+  // Optionally auto-open the review modal for a rental
+  openReview?: {
+    rentalId?: string;
+    reviewFor?: 'borrower' | 'lender';
+  } | null;
 };
 
 // Normalize DB status/return_status into UI buckets
@@ -281,6 +286,30 @@ export default function MyRentals({
   useEffect(() => {
     if (perspectiveOverride) setActiveTab(perspectiveOverride);
   }, [perspectiveOverride]);
+
+  // Auto-open review modal when parent requests it via props
+  useEffect(() => {
+    if (!openReview) return;
+    const { rentalId, reviewFor } = openReview;
+    if (!rentalId) return;
+
+    // If we have rentals loaded, try to find this rental and open the review modal
+    const allRentals = [...borrowerRentals, ...lenderRentals];
+    const found = allRentals.find(r => r.id === rentalId);
+    if (found) {
+      // Choose tab based on who should be reviewed: if reviewFor === 'lender', user is borrower
+      if (reviewFor === 'lender') {
+        setActiveTab('borrowing');
+        setBorrowerSubTab('completed');
+      } else if (reviewFor === 'borrower') {
+        setActiveTab('lending');
+        setLenderSubTab('completed');
+      }
+
+      setSelectedRental(found);
+      setReviewModalOpen(true);
+    }
+  }, [openReview, borrowerRentals, lenderRentals]);
 
   if (userLoading || loading) {
     return (
