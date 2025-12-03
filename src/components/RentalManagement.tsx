@@ -7,6 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { Calendar, DollarSign, Clock, X } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import DepositManager from './DepositManager';
+import { formatRentalDateRange } from '../lib/dateUtils';
 
 type RentalRequest = {
   id: string;
@@ -19,11 +20,13 @@ type RentalRequest = {
   status: string;
   return_status?: string | null;
   location: string;
+  meeting_time?: string | null;
   gear_daily_rate?: number;
   gear_deposit_amount?: number;
   renter_name?: string;
   deposit_status?: string;
   deposit_charged_amount?: number;
+  protection_type?: string;
   created_at: string;
   gear_owner_id?: string | null;
 };
@@ -405,31 +408,63 @@ export default function RentalManagement({
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
                     <span>
-                      {new Date(rental.start_time).toLocaleDateString()} →{' '}
-                      {new Date(rental.end_time).toLocaleDateString()}
+                      {formatRentalDateRange(rental.start_time, rental.end_time)}
                     </span>
                   </div>
 
-                  {(rental.gear_deposit_amount || 0) > 0 && (
-                    <div className="flex items.CENTER gap-2">
-                      <DollarSign className="w-4 h-4" />
-                      <span className={getDepositStatusColor(rental.deposit_status)}>
-                        Deposit: ${rental.gear_deposit_amount}{' '}
-                        {rental.deposit_status &&
-                          rental.deposit_status !== 'not_required' && (
-                            <span className="ml-1 text-xs">
-                              ({rental.deposit_status.replace('_', ' ')})
-                            </span>
-                          )}
+                  {rental.meeting_time && (
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4" />
+                      <span>
+                        Pickup: {(() => {
+                          try {
+                            const meetingDate = new Date(rental.meeting_time);
+                            return meetingDate.toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                              hour12: true
+                            });
+                          } catch (e) {
+                            console.error('Error parsing meeting time:', rental.meeting_time);
+                            return 'Invalid time';
+                          }
+                        })()}
                       </span>
                     </div>
+                  )}
+
+                  {rental.protection_type === 'premium' ? (
+                    <div className="flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-emerald-600" />
+                      <span className="text-emerald-600 font-medium">
+                        Premium Protection Selected
+                      </span>
+                    </div>
+                  ) : (
+                    (rental.gear_deposit_amount || 0) > 0 && (
+                      <div className="flex items.CENTER gap-2">
+                        <DollarSign className="w-4 h-4" />
+                        <span className={getDepositStatusColor(rental.deposit_status)}>
+                          Deposit: ${rental.gear_deposit_amount}{' '}
+                          {rental.deposit_status &&
+                            rental.deposit_status !== 'not_required' && (
+                              <span className="ml-1 text-xs">
+                                ({rental.deposit_status.replace('_', ' ')})
+                              </span>
+                            )}
+                        </span>
+                      </div>
+                    )
                   )}
                 </div>
 
                 <div className="flex gap-2 flex-wrap">
-                  {/* Deposit management */}
+                  {/* Deposit management - only show for standard protection (escrow) */}
                   {(rental.status === 'active' ||
                     rental.status === 'completed') &&
+                    rental.protection_type !== 'premium' &&
                     (rental.gear_deposit_amount || 0) > 0 && (
                       <button
                         onClick={() => handleViewDeposit(rental)}

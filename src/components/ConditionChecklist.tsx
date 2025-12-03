@@ -113,44 +113,109 @@ export default function ConditionChecklist({
   };
 
   const handleSubmit = async () => {
-    if (photoUrls.length === 0) {
+    // For return checklist, photos are optional (pre-return check)
+    // For pickup checklist, photos are required
+    if (checklistType === 'pickup' && photoUrls.length === 0) {
       setError('Please upload at least one photo');
+      return;
+    }
+
+    // TEMPORARY: Skip database operations for debugging
+    if (checklistType === 'return') {
+      console.log('TEMPORARY: Skipping database for return checklist, calling onComplete directly');
+      onComplete('temp-' + Date.now());
       return;
     }
 
     try {
       setSubmitting(true);
       setError('');
+      
+      console.log('Starting checklist submission...', {
+        checklistType,
+        rentalId,
+        gearListingId,
+        photoCount: photoUrls.length
+      });
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      const { data, error: insertError } = await supabase
+      // Check if a checklist already exists for this rental and type
+      console.log('Checking for existing checklist...');
+      const { data: existingChecklist, error: selectError } = await supabase
         .from('condition_checklists')
-        .insert({
-          rental_id: rentalId,
-          gear_listing_id: gearListingId,
-          user_id: user.id,
-          checklist_type: checklistType,
-          overall_condition: overallCondition,
-          physical_damage: physicalDamage,
-          physical_damage_notes: physicalDamageNotes || null,
-          missing_parts: missingParts,
-          missing_parts_notes: missingPartsNotes || null,
-          functionality_issues: functionalityIssues,
-          functionality_notes: functionalityNotes || null,
-          cleanliness_rating: cleanlinessRating,
-          additional_notes: additionalNotes || null,
-          photo_urls: photoUrls
-        })
-        .select()
-        .single();
+        .select('id')
+        .eq('rental_id', rentalId)
+        .eq('checklist_type', checklistType)
+        .maybeSingle(); // Use maybeSingle instead of single to avoid error if not found
 
-      if (insertError) throw insertError;
+      if (selectError) {
+        console.error('Error checking existing checklist:', selectError);
+        throw selectError;
+      }
 
+      console.log('Existing checklist check result:', existingChecklist);
+
+      let data;
+      if (existingChecklist) {
+        // Update existing checklist
+        const { data: updateData, error: updateError } = await supabase
+          .from('condition_checklists')
+          .update({
+            overall_condition: overallCondition,
+            physical_damage: physicalDamage,
+            physical_damage_notes: physicalDamageNotes || null,
+            missing_parts: missingParts,
+            missing_parts_notes: missingPartsNotes || null,
+            functionality_issues: functionalityIssues,
+            functionality_notes: functionalityNotes || null,
+            cleanliness_rating: cleanlinessRating,
+            additional_notes: additionalNotes || null,
+            photo_urls: photoUrls,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingChecklist.id)
+          .select()
+          .single();
+
+        if (updateError) throw updateError;
+        data = updateData;
+        console.log('Updated existing checklist:', data.id);
+      } else {
+        // Create new checklist
+        const { data: insertData, error: insertError } = await supabase
+          .from('condition_checklists')
+          .insert({
+            rental_id: rentalId,
+            gear_listing_id: gearListingId,
+            user_id: user.id,
+            checklist_type: checklistType,
+            overall_condition: overallCondition,
+            physical_damage: physicalDamage,
+            physical_damage_notes: physicalDamageNotes || null,
+            missing_parts: missingParts,
+            missing_parts_notes: missingPartsNotes || null,
+            functionality_issues: functionalityIssues,
+            functionality_notes: functionalityNotes || null,
+            cleanliness_rating: cleanlinessRating,
+            additional_notes: additionalNotes || null,
+            photo_urls: photoUrls
+          })
+          .select()
+          .single();
+
+        if (insertError) throw insertError;
+        data = insertData;
+        console.log('Created new checklist:', data.id);
+      }
+
+      console.log('Checklist submitted successfully, calling onComplete with ID:', data.id);
       onComplete(data.id);
+      console.log('onComplete callback executed');
     } catch (err: any) {
       console.error('Error submitting checklist:', err);
+      console.error('Full error object:', err);
       setError(err.message || 'Failed to submit checklist');
     } finally {
       setSubmitting(false);

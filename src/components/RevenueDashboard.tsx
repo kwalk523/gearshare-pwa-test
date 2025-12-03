@@ -7,7 +7,7 @@ import { usePayouts } from '../hooks/usePayouts';
 
 export default function RevenueDashboard() {
   const [user, setUser] = useState<User | null>(null);
-  const { stats, loading } = useRevenue(user?.id);
+  const { stats, loading, refresh } = useRevenue(user?.id);
   const { pendingAmount, payouts, loading: payoutsLoading, creating, error: payoutError, createPayout, refresh: refreshPayouts } = usePayouts(user?.id);
 
   useEffect(() => {
@@ -19,6 +19,12 @@ export default function RevenueDashboard() {
     }
     loadUser();
   }, []);
+
+  const handleManualRefresh = () => {
+    console.log('🔄 Manual refresh triggered');
+    refresh();
+    refreshPayouts();
+  };
 
   if (loading || payoutsLoading) {
     return <div className="py-16 text-center text-emerald-600 animate-pulse">Loading earnings & payouts...</div>;
@@ -64,9 +70,17 @@ export default function RevenueDashboard() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="mb-2">Earnings Dashboard</h1>
-        <p className="text-gray-600">Track your rental income and performance</p>
+      <div className="mb-8 flex justify-between items-center">
+        <div>
+          <h1 className="mb-2">Earnings Dashboard</h1>
+          <p className="text-gray-600">Track your rental income and performance</p>
+        </div>
+        <button
+          onClick={handleManualRefresh}
+          className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+        >
+          🔄 Refresh
+        </button>
       </div>
 
       {/* Top Stats Grid */}

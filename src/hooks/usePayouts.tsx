@@ -75,6 +75,27 @@ export function usePayouts(ownerId?: string) {
     load();
   }, [load]);
 
+  // Real-time subscription for rental updates that affect payouts
+  useEffect(() => {
+    if (!ownerId) return;
+    
+    const channel = supabase
+      .channel('payout-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'rental_requests' },
+        (payload) => {
+          console.log('Payout-affecting transaction detected, refreshing payouts...');
+          load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [ownerId, load]);
+
   return {
     pendingAmount,
     payouts,

@@ -65,6 +65,14 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-indigo-900 via-indigo-700 to-indigo-500 px-4 relative">
       <div className="bg-white rounded-3xl shadow-xl p-10 max-w-md w-full">
+        {/* GearShare Branding */}
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-indigo-600 to-indigo-800 bg-clip-text text-transparent">
+            GearShare
+          </h1>
+          <p className="text-gray-600 text-sm mt-2">Share gear, build community</p>
+        </div>
+        
         <div className="flex justify-between mb-6">
           <button
             onClick={() => setIsSignUp(false)}

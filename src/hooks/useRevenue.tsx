@@ -36,6 +36,7 @@ export function useRevenue(userId?: string) {
 
   const calculateRevenue = async (uid: string) => {
     setLoading(true);
+    console.log('🧮 Calculating revenue for user:', uid);
     try {
       // Get all gear owned by this user
       const { data: gearData } = await supabase
@@ -43,10 +44,13 @@ export function useRevenue(userId?: string) {
         .select('id, title, daily_rate')
         .eq('owner_id', uid);
       
+      console.log('🎯 Found gear:', gearData?.length || 0, 'items');
+      
       const gearIds = gearData?.map(g => g.id) || [];
       const gearMap = new Map(gearData?.map(g => [g.id, g]) || []);
       
       if (gearIds.length === 0) {
+        console.log('⚠️ No gear found for user');
         setStats({
           totalEarnings: 0,
           pendingPayouts: 0,
@@ -65,17 +69,34 @@ export function useRevenue(userId?: string) {
       }
 
       // Get all rental requests for this user's gear
-      const { data: rentals, error } = await supabase
+      let query = supabase
         .from('rental_requests')
         .select('*')
-        .in('gear_id', gearIds)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      // Use gear_owner_id if available, otherwise fall back to gear_id matching
+      if (gearIds.length > 0) {
+        query = query.in('gear_id', gearIds);
+      } else {
+        query = query.eq('gear_owner_id', uid);
+      }
+
+      const { data: rentals, error } = await query;
+
+      if (error) {
+        console.error('❌ Error fetching rentals:', error);
+        throw error;
+      }
+
+      console.log('📊 Found rentals:', rentals?.length || 0);
+      console.log('📊 Rental statuses:', rentals?.map(r => `${r.id}: ${r.status}`).join(', '));
 
       // Calculate various metrics
       const completedRentals = rentals?.filter(r => r.status === 'completed') || [];
       const activeRentals = rentals?.filter(r => r.status === 'active') || [];
+      
+      console.log('✅ Completed rentals:', completedRentals.length);
+      console.log('🔄 Active rentals:', activeRentals.length);
 
       // Helper: compute rental days ensuring minimum of 1 day
       type MinimalRental = { start_time?: string; end_time?: string };
@@ -92,8 +113,12 @@ export function useRevenue(userId?: string) {
       const totalEarnings = completedRentals.reduce((sum, r) => {
         const days = computeDays(r);
         const dailyRate = (r.gear_daily_rate ?? gearMap.get(r.gear_id)?.daily_rate) || 0;
-        return sum + dailyRate * days;
+        const earnings = dailyRate * days;
+        console.log(`💰 Rental ${r.id}: ${days} days × $${dailyRate} = $${earnings}`);
+        return sum + earnings;
       }, 0);
+      
+      console.log('🎯 Total earnings calculated:', totalEarnings);
 
       // Pending payouts (active rentals)
       const pendingPayouts = activeRentals.reduce((sum, r) => {
@@ -228,6 +253,29 @@ export function useRevenue(userId?: string) {
     } else {
       setLoading(false);
     }
+  }, [userId]);
+
+  // Real-time subscription for rental updates that affect revenue
+  useEffect(() => {
+    if (!userId) return;
+    
+    const channel = supabase
+      .channel('revenue-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'rental_requests' },
+        (payload) => {
+          // Only refresh if this is a rental for gear owned by this user
+          // We'll refresh on any change to be safe since we'd need to query to check ownership
+          console.log('Revenue-affecting transaction detected, refreshing earnings...');
+          calculateRevenue(userId);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
   }, [userId]);
 
   return {

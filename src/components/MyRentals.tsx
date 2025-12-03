@@ -15,6 +15,7 @@ import type { User } from '@supabase/supabase-js';
 import ReviewSystem from './ReviewSystem';
 import DepositManager from './DepositManager';
 import { useUser } from '../context/UserContext';
+import { formatRentalDateRange } from '../lib/dateUtils';
 
 type Rental = {
   id: string;
@@ -30,6 +31,9 @@ type Rental = {
   return_status?: string | null;
   location: string;
   escrow_amount: number;
+  meeting_time?: string | null;
+  completed_at?: string | null;
+  created_at: string;
   gear_listings?: {
     title: string;
     image_url: string | null;
@@ -49,11 +53,6 @@ type MyRentalsProps = {
   perspectiveOverride?: 'borrowing' | 'lending';
   borrowingStatusOverride?: 'pending' | 'active' | 'completed';
   lendingStatusOverride?: 'pending' | 'active' | 'completed';
-  // Optionally auto-open the review modal for a rental
-  openReview?: {
-    rentalId?: string;
-    reviewFor?: 'borrower' | 'lender';
-  } | null;
 };
 
 // Normalize DB status/return_status into UI buckets
@@ -106,7 +105,6 @@ export default function MyRentals({
   perspectiveOverride,
   borrowingStatusOverride,
   lendingStatusOverride,
-  openReview = null,
 }: MyRentalsProps) {
   const { user: profileUser, loading: userLoading } = useUser();
   const user = useMemo(
@@ -143,25 +141,40 @@ export default function MyRentals({
         // Borrower rentals
         const { data: renterData, error: renterErr } = await supabase
           .from('rental_requests')
-          .select('*, gear_listings(title, image_url, owner_id)')
+          .select('*, gear_listings(title, image_url, owner_id), renter_reviewed, lender_reviewed')
           .eq('renter_id', user.id)
-          .order('start_time', { ascending: false });
+          .order('created_at', { ascending: false });
 
         if (renterErr) {
           console.error('Borrowing fetch error:', renterErr);
         }
-        setBorrowerRentals((renterData || []) as Rental[]);
+        // Sort borrower rentals by created_at for now
+        const sortedBorrowerData = ((renterData || []) as Rental[]).sort((a, b) => {
+          const aCompleted = a.status === 'completed';
+          const bCompleted = b.status === 'completed';
+          
+          // For now, just sort by created_at with completed items first
+          if (aCompleted && bCompleted) {
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          } else if (aCompleted || bCompleted) {
+            return aCompleted ? -1 : 1; // Completed items first
+          } else {
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+        });
+        
+        setBorrowerRentals(sortedBorrowerData);
 
         // Lender rentals – dual query with backfill
         const { data: directOwnerData, error: directOwnerError } = await supabase
           .from('rental_requests')
-          .select('*, gear_listings(title, image_url, owner_id)')
+          .select('*, gear_listings(title, image_url, owner_id), renter_reviewed, lender_reviewed')
           .eq('gear_owner_id', user.id)
-          .order('start_time', { ascending: false });
+          .order('created_at', { ascending: false });
 
         const { data: joinOwnerData, error: joinOwnerError } = await supabase
           .from('rental_requests')
-          .select('*, gear_listings!inner(owner_id,title,image_url)')
+          .select('*, gear_listings!inner(owner_id,title,image_url), renter_reviewed, lender_reviewed')
           .eq('gear_listings.owner_id', user.id)
           .is('gear_owner_id', null)
           .order('created_at', { ascending: false });
@@ -242,8 +255,23 @@ export default function MyRentals({
           ...rental,
           renter_name: rentersMap[rental.renter_id || ''] || 'Unknown User',
         }));
+        
+        // Sort completed rentals by created_at for now (since completed_at doesn't exist yet)
+        const sortedLenderData = enrichedLenderData.sort((a, b) => {
+          const aCompleted = a.status === 'completed';
+          const bCompleted = b.status === 'completed';
+          
+          // For now, just sort by created_at with completed items first
+          if (aCompleted && bCompleted) {
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          } else if (aCompleted || bCompleted) {
+            return aCompleted ? -1 : 1; // Completed items first
+          } else {
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          }
+        });
 
-        setLenderRentals(enrichedLenderData);
+        setLenderRentals(sortedLenderData);
       } catch (error) {
         console.error('Fetch all error:', error);
       } finally {
@@ -287,30 +315,6 @@ export default function MyRentals({
   useEffect(() => {
     if (perspectiveOverride) setActiveTab(perspectiveOverride);
   }, [perspectiveOverride]);
-
-  // Auto-open review modal when parent requests it via props
-  useEffect(() => {
-    if (!openReview) return;
-    const { rentalId, reviewFor } = openReview;
-    if (!rentalId) return;
-
-    // If we have rentals loaded, try to find this rental and open the review modal
-    const allRentals = [...borrowerRentals, ...lenderRentals];
-    const found = allRentals.find(r => r.id === rentalId);
-    if (found) {
-      // Choose tab based on who should be reviewed: if reviewFor === 'lender', user is borrower
-      if (reviewFor === 'lender') {
-        setActiveTab('borrowing');
-        setBorrowerSubTab('completed');
-      } else if (reviewFor === 'borrower') {
-        setActiveTab('lending');
-        setLenderSubTab('completed');
-      }
-
-      setSelectedRental(found);
-      setReviewModalOpen(true);
-    }
-  }, [openReview, borrowerRentals, lenderRentals]);
 
   if (userLoading || loading) {
     return (
@@ -364,10 +368,44 @@ export default function MyRentals({
               <div className="text-sm text-gray-600 flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
                 <span>
-                  {new Date(rental.start_time).toLocaleDateString()} →{' '}
-                  {new Date(rental.end_time).toLocaleDateString()}
+                  {formatRentalDateRange(rental.start_time, rental.end_time)}
                 </span>
               </div>
+              {/* Meeting time for active rentals, created time for completed rentals */}
+              {(rental.meeting_time || rental.status === 'completed') && (
+                <div className="text-sm text-gray-600 flex items-center gap-2">
+                  <Clock className="w-4 h-4" />
+                  <span>
+                    {(() => {
+                      try {
+                        if (rental.status === 'completed') {
+                          const createdDate = new Date(rental.created_at);
+                          return `Completed: ${createdDate.toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                          })}`;
+                        } else if (rental.meeting_time) {
+                          const meetingDate = new Date(rental.meeting_time);
+                          return `Pickup: ${meetingDate.toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                          })}`;
+                        }
+                        return 'Time not set';
+                      } catch (e) {
+                        console.error('Error parsing time:', e);
+                        return 'Invalid time';
+                      }
+                    })()}
+                  </span>
+                </div>
+              )}
               <div className="text-sm text-gray-500 flex items-center gap-2">
                 <MapPin className="w-4 h-4" />
                 {rental.location}
@@ -415,7 +453,28 @@ export default function MyRentals({
           </div>
 
           <div className="flex gap-2 mt-4 flex-wrap">
-            {/* TODO: reuse your previous action buttons (review, deposit, return flow) */}
+            {/* Review button for completed rentals */}
+            {normalizedStatus === 'completed' && (
+              <>
+                {/* Show review button if user hasn't reviewed yet */}
+                {((perspective === 'borrower' && !rental.renter_reviewed) ||
+                  (perspective === 'lender' && !rental.lender_reviewed)) && (
+                  <button
+                    onClick={() => handleReviewClick(rental)}
+                    className="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-emerald-700 transition-colors"
+                  >
+                    Write Review
+                  </button>
+                )}
+                {/* Show "Reviewed" status if already reviewed */}
+                {((perspective === 'borrower' && rental.renter_reviewed) ||
+                  (perspective === 'lender' && rental.lender_reviewed)) && (
+                  <span className="bg-gray-100 text-gray-600 px-3 py-1.5 rounded text-sm font-medium">
+                    ✓ Reviewed
+                  </span>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

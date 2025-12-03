@@ -4,11 +4,14 @@ import { useRef } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { CheckCircle, Clock, MapPin, ArrowRight } from 'lucide-react';
+import { CheckCircle, Clock, MapPin, ArrowRight, Calendar } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { useUser } from '../context/UserContext';
+import ReviewSystem from './ReviewSystem';
+import ConditionChecklist from './ConditionChecklist';
 import {
   ScheduleReturnStep,
+  ConfirmMeetingStep,
   InspectionStep,
   PhotoUploadStep,
   OwnerConfirmationStep,
@@ -23,7 +26,9 @@ interface ReturnWorkflowViewProps {
   perspective: 'borrower' | 'lender';
   onReadyForPickup: (rentalId: string, notes?: string) => Promise<void> | void;
   onSchedule: (rentalId: string, time: string) => Promise<void> | void;
-  onInspection: (rentalId: string, notes: string) => Promise<void> | void;
+  onConfirmMeeting: (rentalId: string) => Promise<void> | void;
+  onRequestDifferentTime: (rentalId: string) => Promise<void> | void;
+  onInspection: (rentalId: string, notes: string, hasDamage?: boolean) => Promise<void> | void;
   onPhotoUpload: (rentalId: string, file: File) => Promise<void> | void;
   onConfirm: (
     rentalId: string,
@@ -69,8 +74,14 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
   const [lenderActiveRentals, setLenderActiveRentals] = useState<Rental[]>([]);
   const [lenderReturnRentals, setLenderReturnRentals] = useState<Rental[]>([]);
   const [workflowState, setWorkflowState] = useState<ReturnWorkflowState>({
-    step: 'schedule',
+    step: 'checklist',
   });
+
+  // Debug workflow state changes
+  useEffect(() => {
+    console.log('🔄 Workflow state changed:', workflowState);
+  }, [workflowState]);
+
   const [perspective, setPerspective] = useState<'borrower' | 'lender'>(
     perspectiveOverride || 'borrower',
   );
@@ -78,6 +89,10 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
   const [activeRentalId, setActiveRentalId] = useState<string | null>(null);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState('');
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRental, setReviewRental] = useState<Rental | null>(null);
   const [showLenderTab, setShowLenderTab] = useState<'active' | 'returns'>('active');
   const [showBorrowerTab, setShowBorrowerTab] = useState<'active' | 'returns'>('active');
   // Track unviewed counts for tabs
@@ -198,6 +213,15 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
     setLenderReturnRentals(returnRentals as Rental[]);
   };
 
+  // --- Auto-refresh helper for status changes ---
+  const refreshData = async () => {
+    if (!user) return;
+    await Promise.all([
+      refreshBorrowerRentals(user.id),
+      refreshLenderRentals(user.id)
+    ]);
+  };
+
   // --- Initial Load ---
   useEffect(() => {
     if (!user) return;
@@ -250,28 +274,209 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
 
   // --- Handlers for workflow steps ---
   const handleSchedule = async (rentalId: string, time: string) => {
+    // Convert the time string (e.g., "09:00 AM") to a proper timestamp
+    // For demo purposes, schedule for tomorrow at the selected time
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const [timePart, period] = time.split(' ');
+    const [hours, minutes] = timePart.split(':').map(Number);
+    
+    let hour24 = hours;
+    if (period === 'PM' && hours !== 12) {
+      hour24 += 12;
+    } else if (period === 'AM' && hours === 12) {
+      hour24 = 0;
+    }
+    
+    tomorrow.setHours(hour24, minutes, 0, 0);
+    const timestamp = tomorrow.toISOString();
+
     await supabase
       .from('rental_requests')
-      .update({ return_status: 'scheduled', return_time: time })
+      .update({ return_status: 'scheduled', return_time: timestamp })
       .eq('id', rentalId);
 
-    setWorkflowState((prev) => ({
-      ...prev,
-      step: 'inspect',
-      scheduled_time: time,
-    }));
+    // For borrower: go directly to waiting state since they just requested a time
+    // For lender: go to confirm_meeting so they can approve/deny the time
+    if (perspective === 'borrower') {
+      setWorkflowState((prev) => ({
+        ...prev,
+        step: 'waiting_for_meeting',
+        scheduled_time: timestamp,
+      }));
+      
+      // Show confirmation message for borrower
+      setConfirmationMessage('Return time requested! Please wait for the lender to confirm the meeting time. You will be notified once confirmed.');
+      setShowConfirmationModal(true);
+    } else {
+      setWorkflowState((prev) => ({
+        ...prev,
+        step: 'confirm_meeting',
+        scheduled_time: timestamp,
+      }));
+    }
+    
+    // Refresh data after scheduling
+    await refreshData();
   };
 
-  const handleInspection = async (rentalId: string, notes: string) => {
+  const formatReturnStatus = (status: string, perspective: 'borrower' | 'lender') => {
+    switch (status) {
+      case 'not_started':
+        return 'Return process not started';
+      case 'scheduled':
+        return perspective === 'borrower' 
+          ? 'Waiting for lender confirmation'
+          : 'Time requested by borrower';
+      case 'meeting_confirmed':
+        return 'Meeting confirmed';
+      case 'time_change_requested':
+        return perspective === 'borrower'
+          ? 'Time change requested'
+          : 'Lender requested different time';
+      case 'completed':
+        return 'Return completed';
+      case 'disputed':
+        return 'Dispute in progress';
+      default:
+        return status.replace('_', ' ');
+    }
+  };
+
+  // Determine workflow step based on rental status and perspective
+  const getWorkflowStep = (rental: Rental, perspective: 'borrower' | 'lender'): string => {
+    const status = rental.return_status;
+    
+    if (!status || status === 'not_started') {
+      // Borrowers start with checklist, lenders skip directly to schedule
+      return perspective === 'borrower' ? 'checklist' : 'schedule';
+    }
+    
+    switch (status) {
+      case 'scheduled':
+        // Borrower has scheduled time, waiting for lender confirmation
+        return perspective === 'lender' ? 'confirm_meeting' : 'waiting_for_meeting';
+      case 'meeting_confirmed':
+        // Meeting is confirmed, now it's time for inspection
+        return 'inspect';
+      case 'time_change_requested':
+        // Lender requested different time, borrower needs to reschedule
+        return perspective === 'borrower' ? 'schedule' : 'waiting_for_meeting';
+      case 'ready_for_pickup':
+        return perspective === 'borrower' ? 'photo' : 'confirm';
+      case 'completed':
+        return 'complete';
+      default:
+        return 'schedule';
+    }
+  };
+
+  const handleConfirmMeeting = async (rentalId: string) => {
+    try {
+      console.log('Confirming meeting for rental:', rentalId);
+      
+      // This should primarily be called by lenders to confirm a borrower's requested time
+      const { data, error } = await supabase
+        .from('rental_requests')
+        .update({ return_status: 'meeting_confirmed' })
+        .eq('id', rentalId);
+
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+
+      console.log('Meeting confirmed successfully:', data);
+      setWorkflowState((prev) => ({
+        ...prev,
+        step: 'waiting_for_meeting',
+      }));
+
+      // Show confirmation message
+      const message = perspective === 'lender' 
+        ? 'Meeting confirmed! The borrower has been notified. You will both meet at the scheduled time for the item return.'
+        : 'Meeting confirmed! The lender has been notified. You will both meet at the scheduled time for the item return.';
+      
+      setConfirmationMessage(message);
+      setShowConfirmationModal(true);
+      
+      // Refresh data after meeting confirmation
+      await refreshData();
+
+      // TODO: Add real-time notification to the other party
+
+    } catch (error) {
+      console.error('Error confirming meeting:', error);
+      alert('Failed to confirm meeting. Please try again.');
+    }
+  };
+
+  const handleRequestDifferentTime = async (rentalId: string) => {
+    try {
+      console.log('Requesting different time for rental:', rentalId);
+      // Reset the return status to allow rescheduling
+      const { data, error } = await supabase
+        .from('rental_requests')
+        .update({ 
+          return_status: 'time_change_requested',
+          return_time: null 
+        })
+        .eq('id', rentalId);
+
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+
+      console.log('Time request successful:', data);
+      
+      // Show confirmation modal
+      setConfirmationMessage(
+        'Time change request sent! The borrower has been notified and will need to select a new meeting time. You will be notified once they reschedule.'
+      );
+      setShowConfirmationModal(true);
+
+      // TODO: Add real-time notification to the borrower
+      // This could be done via Supabase real-time or push notifications
+
+    } catch (error) {
+      console.error('Error requesting different time:', error);
+      alert('Failed to request different time. Please try again.');
+    }
+  };
+
+  const handleInspection = async (rentalId: string, notes: string, hasDamage?: boolean) => {
+    console.log('handleInspection called with:', { rentalId, notes, hasDamage });
+    
+    // Store inspection notes
     await supabase
       .from('rental_requests')
       .update({ inspection_notes: notes })
       .eq('id', rentalId);
 
-    setWorkflowState((prev) => ({
-      ...prev,
-      step: 'photo',
-    }));
+    if (hasDamage) {
+      console.log('Damage detected, setting workflow to confirm step');
+      console.log('Current workflow state:', workflowState);
+      // If there's damage, go to the detailed confirmation step for damage reporting
+      setWorkflowState((prev) => {
+        const newState = {
+          ...prev,
+          step: 'confirm',
+          hasDamage: true,
+          inspectionNotes: notes,
+        };
+        console.log('Setting new workflow state:', newState);
+        return newState;
+      });
+    } else {
+      console.log('No damage detected, completing return');
+      // If item is in good condition, complete the return immediately
+      await handleConfirm(rentalId, false, notes);
+    }
+    
+    // Refresh data after inspection
+    await refreshData();
   };
 
   const handlePhotoUpload = async (rentalId: string, file: File) => {
@@ -289,26 +494,65 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
     description?: string,
     photos?: string[],
   ) => {
+    console.log('🔚 Starting rental completion process:', { rentalId, hasDamage, description });
+    
     // Update return_status and notes in the rental_requests table
     const newReturnStatus = hasDamage ? 'damage_reported' : 'completed';
+    const newStatus = hasDamage ? 'active' : 'completed';
+
+    console.log('📝 Updating rental status:', { newReturnStatus, newStatus });
 
     const { error } = await supabase
       .from('rental_requests')
       .update({
         return_status: newReturnStatus,
-        status: hasDamage ? 'active' : 'completed', // completed if no damage
+        status: newStatus,
+        inspection_notes: description || null
       })
       .eq('id', rentalId);
 
     if (error) {
-      console.error('Failed to update return status:', error);
+      console.error('❌ Failed to update return status:', error);
+      alert('Failed to update rental status. Please try again.');
       return;
+    }
+
+    console.log('✅ Rental status updated successfully');
+
+    // If rental is completed (no damage), make the gear available again
+    if (!hasDamage) {
+      const { data: rentalData } = await supabase
+        .from('rental_requests')
+        .select('gear_id')
+        .eq('id', rentalId)
+        .single();
+
+      if (rentalData?.gear_id) {
+        console.log('🔓 Making gear available again:', rentalData.gear_id);
+        const { error: gearError } = await supabase
+          .from('gear_listings')
+          .update({ is_available: true })
+          .eq('id', rentalData.gear_id);
+
+        if (gearError) {
+          console.error('Failed to make gear available:', gearError);
+        }
+      }
+      
+      // Update local state to reflect completion
+      console.log('🎉 Rental completed successfully');
+      
+      // Show success feedback
+      alert('Rental completed successfully! The gear is now available for the next renter.');
+      
+      // Refresh the current data
+      refreshData();
     }
 
     // Fetch rental details for notifications (e.g., renter_id, owner_id, gear title)
     const { data: rentalData, error: rentalError } = await supabase
       .from('rental_requests')
-      .select('renter_id, gear_owner_id, gear_title, gear_id, location, return_time')
+      .select('renter_id, gear_owner_id, gear_title, location, return_time')
       .eq('id', rentalId)
       .single();
 
@@ -326,8 +570,7 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
         message: hasDamage
           ? `Your return of ${rentalData.gear_title} was flagged for damage and is in dispute.`
           : `Your return of ${rentalData.gear_title} is complete. Your deposit will be returned shortly.`,
-        // Prompt renter to leave a review for the lender
-        link: `/rent?tab=completed&openReview=${rentalId}&reviewFor=lender`,
+        link: '/browse',
         related_id: rentalId,
         is_read: false,
       },
@@ -338,8 +581,7 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
         message: hasDamage
           ? `${rentalData.gear_title} return was flagged for damage and requires your review.`
           : `${rentalData.gear_title} return is complete and deposit will be processed.`,
-        // Prompt owner (lender) to leave a review for the borrower
-        link: `/rent?tab=completed&openReview=${rentalId}&reviewFor=borrower`,
+        link: '/rent', // or lender dashboard link
         related_id: rentalId,
         is_read: false,
       },
@@ -351,32 +593,35 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
       console.error('Failed to insert notifications:', notifError);
     }
 
-    // If no damage, mark the gear listing as available again so others can rent it
-    if (!hasDamage && rentalData?.gear_id) {
-      const { error: makeAvailError } = await supabase
-        .from('gear_listings')
-        .update({ is_available: true })
-        .eq('id', rentalData.gear_id);
-      if (makeAvailError) {
-        console.error('Failed to mark gear available after return:', makeAvailError);
-      }
-    }
-
     // Refresh both lender and borrower rentals to reflect updated status
     await Promise.all([
       refreshLenderRentals(user.id),
       refreshBorrowerRentals(rentalData.renter_id),
     ]);
 
-    // If no damage, immediately prompt for rating (RatingsStep)
+    // If no damage, show completion confirmation and prompt for rating
     if (!hasDamage) {
-      if (perspective === 'lender') {
-        setShowReviewModal(true);
-      }
+      // Find the current rental for review context
+      const currentRental = 
+        perspective === 'lender' ? lenderReturnRentals.find(r => r.id === rentalId)
+        : borrowerReturnRentals.find(r => r.id === rentalId);
+      
+      setConfirmationMessage(
+        perspective === 'lender' 
+          ? 'Inspection completed successfully! The item was returned in good condition.'
+          : 'Thank you! Your return has been confirmed as successful.'
+      );
+      
+      // Both lender and borrower should get review prompts
+      setShowReviewForm(true);
+      setReviewRental(currentRental || null);
+      setShowConfirmationModal(true);
+      
       setWorkflowState({ step: 'complete' });
-      setLoading(true);
-      await refreshLenderRentals(user.id);
-      setLoading(false);
+      
+      // Refresh data after completion
+      await refreshData();
+      
       return;
     }
   // --- Completion Modal ---
@@ -392,7 +637,7 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
 
     // If damage, reset or close workflow UI
     setActiveRentalId(null);
-    setWorkflowState({ step: 'schedule' });
+    setWorkflowState({ step: 'checklist' });
     setLoading(true);
     await refreshLenderRentals(user.id);
     setLoading(false);
@@ -480,6 +725,8 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
     perspective,
     onReadyForPickup,
     onSchedule,
+    onConfirmMeeting,
+    onRequestDifferentTime,
     onInspection,
     onPhotoUpload,
     onConfirm,
@@ -488,7 +735,9 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
     onBack,
     setShowBorrowerTab,
   }: ReturnWorkflowViewProps & { setShowBorrowerTab: (tab: 'active' | 'returns') => void }) {
-    const steps = [
+    // Different steps based on perspective
+    const allSteps = [
+      'checklist',
       'schedule',
       'inspect',
       'photo',
@@ -497,6 +746,9 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
       'dispute',
       'complete',
     ];
+    
+    // Lenders skip the checklist step
+    const steps = perspective === 'borrower' ? allSteps : allSteps.slice(1);
     const stepIndex = steps.indexOf(workflowState.step);
     const perspectiveLabel =
       perspective === 'borrower' ? 'Returning' : 'Receiving';
@@ -537,24 +789,92 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
         </div>
 
         {/* Step content */}
+        {workflowState.step === 'checklist' && perspective === 'borrower' && (
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <h4 className="text-lg font-bold mb-4">Pre-Return Checklist</h4>
+            <div className="bg-blue-50 border-l-4 border-blue-600 p-4 mb-6">
+              <p className="text-sm font-medium text-blue-900">
+                📋 Please review your rental item before scheduling the return
+              </p>
+              <p className="text-sm text-blue-700 mt-1">
+                This helps ensure a smooth return process and protects both you and the gear owner.
+              </p>
+            </div>
+            
+            <ConditionChecklist
+              rentalId={rental.id}
+              gearListingId={rental.gear_id}
+              checklistType="return"
+              onComplete={(checklistId: string) => {
+                console.log('Pre-return checklist completed:', checklistId);
+                try {
+                  // Move to schedule step after checklist is completed
+                  setWorkflowState(prev => ({
+                    ...prev,
+                    step: 'schedule',
+                    checklistCompleted: true
+                  }));
+                  console.log('Workflow state updated to schedule step');
+                } catch (error) {
+                  console.error('Error updating workflow state:', error);
+                }
+              }}
+              onCancel={() => {
+                console.log('Pre-return checklist cancelled');
+                // Go back to rentals list if they cancel
+                setActiveRentalId(null);
+              }}
+            />
+          </div>
+        )}
+
         {workflowState.step === 'schedule' && (
           <ScheduleReturnStep
             rental={rental}
-            workflowState={workflowState}
             perspective={perspective}
-            onSchedule={(time: string) => {
-              onSchedule(String(rental.id), time);
+            onSchedule={(rentalId: string, time: string) => {
+              handleSchedule(rentalId, time);
             }}
           />
+        )}
+
+        {workflowState.step === 'confirm_meeting' && (
+          <ConfirmMeetingStep
+            rental={rental}
+            perspective={perspective}
+            scheduledTime={workflowState.scheduled_time}
+            onConfirmMeeting={() => {
+              console.log('Confirm meeting clicked');
+              onConfirmMeeting(String(rental.id));
+            }}
+            onRequestDifferentTime={() => {
+              console.log('Request different time clicked');
+              onRequestDifferentTime(String(rental.id));
+            }}
+          />
+        )}
+
+        {workflowState.step === 'waiting_for_meeting' && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+            <div className="text-blue-600 font-medium mb-2">
+              {rental.return_status === 'scheduled' && perspective === 'borrower' 
+                ? 'Waiting for Lender Confirmation'
+                : 'Meeting Confirmed'}
+            </div>
+            <div className="text-sm text-blue-600">
+              {rental.return_status === 'scheduled' && perspective === 'borrower'
+                ? 'Please wait for the lender to confirm your requested meeting time. You will be notified once confirmed.'
+                : 'Waiting for the scheduled meeting time to begin inspection...'}
+            </div>
+          </div>
         )}
 
         {workflowState.step === 'inspect' && (
           <InspectionStep
             rental={rental}
-            workflowState={workflowState}
             perspective={perspective}
-            onInspection={(notes: string) => {
-              onInspection(String(rental.id), notes);
+            onInspection={(rentalId: string, notes: string, hasDamage?: boolean) => {
+              onInspection(rentalId, notes, hasDamage);
             }}
           />
         )}
@@ -570,11 +890,15 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
           />
         )}
 
-        {workflowState.step === 'confirm' && (
+        {(() => {
+          console.log('Checking confirm step condition. Current step:', workflowState.step);
+          return workflowState.step === 'confirm';
+        })() && (
           <OwnerConfirmationStep
             rental={rental}
             workflowState={workflowState}
             perspective={perspective}
+            scheduledTime={rental.return_time || rental.scheduled_return_time}
             onConfirm={(
               rentalId: string,
               hasDamage: boolean,
@@ -751,23 +1075,43 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
           Loading rentals...
         </div>
       ) : activeRental ? (
-        <ReturnWorkflowView
-          rental={activeRental}
-          workflowState={workflowState}
-          perspective={perspective}
-          onBack={() => {
-            setActiveRentalId(null);
-            setWorkflowState({ step: 'schedule' });
-          }}
-          onReadyForPickup={handleReadyForPickup}
-          onSchedule={handleSchedule}
-          onInspection={handleInspection}
-          onPhotoUpload={handlePhotoUpload}
-          onConfirm={handleConfirm}
-          onDispute={handleDispute}
-          onRating={handleRating}
-          setShowBorrowerTab={setShowBorrowerTab}
-        />
+        (() => {
+          const finalStep = (workflowState.hasDamage && workflowState.step === 'confirm') || workflowState.checklistCompleted
+            ? workflowState.step 
+            : getWorkflowStep(activeRental, perspective);
+          console.log('ReturnWorkflowView step calculation:', {
+            hasDamage: workflowState.hasDamage,
+            currentStep: workflowState.step,
+            checklistCompleted: workflowState.checklistCompleted,
+            getWorkflowStepResult: getWorkflowStep(activeRental, perspective),
+            finalStep
+          });
+          return (
+            <ReturnWorkflowView
+              rental={activeRental}
+              workflowState={{
+                ...workflowState,
+                step: finalStep,
+                scheduled_time: activeRental.return_time || workflowState.scheduled_time
+              }}
+              perspective={perspective}
+              onBack={() => {
+                setActiveRentalId(null);
+                setWorkflowState({ step: 'checklist' });
+              }}
+              onReadyForPickup={handleReadyForPickup}
+              onSchedule={handleSchedule}
+              onConfirmMeeting={handleConfirmMeeting}
+              onRequestDifferentTime={handleRequestDifferentTime}
+              onInspection={handleInspection}
+              onPhotoUpload={handlePhotoUpload}
+              onConfirm={handleConfirm}
+              onDispute={handleDispute}
+              onRating={handleRating}
+              setShowBorrowerTab={setShowBorrowerTab}
+            />
+          );
+        })()
       ) : currentRentals.length === 0 ? (
         <div className="text-center text-gray-500 py-16">
           <CheckCircle className="w-12 h-12 mx-auto mb-4 text-emerald-500" />
@@ -805,7 +1149,7 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
               {r.return_status && (
                 <div className="mt-2">
                   <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                    Return Status: {r.return_status.replace('_', ' ')}
+                    Return Status: {formatReturnStatus(r.return_status, perspective)}
                   </span>
                 </div>
               )}
@@ -816,7 +1160,7 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
                     onClick={(e) => {
                       e.stopPropagation();
                       setActiveRentalId(r.id);
-                      setWorkflowState({ step: 'schedule' });
+                      // Don't override workflow step, let getWorkflowStep determine it
                     }}
                     className="flex-1 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
                   >
@@ -832,15 +1176,29 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
                     onClick={(e) => {
                       e.stopPropagation();
                       setActiveRentalId(r.id);
-                      setWorkflowState({ step: 'confirm' });
+                      // Workflow step will be determined by getWorkflowStep based on rental status
                     }}
                     className={`w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2
                       ${perspective === 'lender' && showLenderTab === 'returns' ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
                     {perspective === 'lender' && showLenderTab === 'returns' ? (
                       <>
-                        <CheckCircle className="w-4 h-4" />
-                        Finish Return
+                        {r.return_status === 'meeting_confirmed' ? (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            Complete Inspection
+                          </>
+                        ) : r.return_status === 'scheduled' ? (
+                          <>
+                            <Calendar className="w-4 h-4" />
+                            Confirm Meeting
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            Finish Return
+                          </>
+                        )}
                       </>
                     ) : (
                       'View Details'
@@ -850,6 +1208,68 @@ export default function ReturnGear({ perspectiveOverride }: ReturnGearProps) {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {showConfirmationModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="text-center">
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+                <CheckCircle className="h-6 w-6 text-green-600" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                Success!
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                {confirmationMessage}
+              </p>
+              
+              {/* Show review form for completed returns */}
+              {showReviewForm && reviewRental && (
+                <div className="mt-6 text-left">
+                  <h4 className="text-md font-medium text-gray-900 mb-3">
+                    Please rate your experience
+                  </h4>
+                  <ReviewSystem
+                    userId={user?.id || ''}
+                    showWriteReview={true}
+                    rentalId={reviewRental.id.toString()}
+                    revieweeId={perspective === 'lender' ? reviewRental.renter_id : reviewRental.owner_id}
+                    reviewType={perspective === 'lender' ? 'lender_to_renter' : 'renter_to_lender'}
+                    onReviewSubmitted={() => {
+                      setShowConfirmationModal(false);
+                      setShowReviewForm(false);
+                      setReviewRental(null);
+                      setActiveRentalId(null);
+                      setWorkflowState({ step: 'checklist' });
+                      // Switch to completed tab to show the completed rental
+                      if (perspective === 'lender') {
+                        setShowLenderTab('returns');
+                      } else {
+                        setShowBorrowerTab('returns');
+                      }
+                    }}
+                  />
+                </div>
+              )}
+              
+              {/* Only show OK button if no review form is shown */}
+              {!showReviewForm && (
+                <button
+                  onClick={() => {
+                    setShowConfirmationModal(false);
+                    setActiveRentalId(null);
+                    setWorkflowState({ step: 'checklist' });
+                  }}
+                  className="w-full bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition-colors"
+                >
+                  OK
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

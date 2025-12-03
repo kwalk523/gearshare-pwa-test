@@ -1,8 +1,7 @@
 // RentDashboard.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import MyRentals from './MyRentals';
 import ReturnGear from './ReturnGear';
 import Favorites from './Favorites';
@@ -19,21 +18,6 @@ type RentTabKey = typeof RENT_TABS[number]['key'];
 
 export default function RentDashboard() {
   const [tab, setTab] = useState<RentTabKey>('pending');
-  const [openReviewParam, setOpenReviewParam] = useState<{ rentalId?: string; reviewFor?: 'borrower'|'lender' } | null>(null);
-  const location = useLocation();
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const tabParam = params.get('tab');
-    const openReview = params.get('openReview');
-    const reviewFor = params.get('reviewFor') as 'borrower' | 'lender' | null;
-    if (tabParam && (['pending','returns','completed','favorites'] as string[]).includes(tabParam)) {
-      setTab(tabParam as RentTabKey);
-    }
-    if (openReview) {
-      setOpenReviewParam({ rentalId: openReview, reviewFor: reviewFor || undefined });
-    }
-  }, [location.search]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
@@ -54,7 +38,7 @@ export default function RentDashboard() {
       </nav>
 
       {tab === 'pending' && (
-        <MyRentals perspectiveOverride="borrowing" borrowingStatusOverride="pending" openReview={openReviewParam} />
+        <MyRentals perspectiveOverride="borrowing" borrowingStatusOverride="pending" />
       )}
 
       {tab === 'returns' && (
@@ -62,7 +46,7 @@ export default function RentDashboard() {
       )}
 
       {tab === 'completed' && (
-        <MyRentals perspectiveOverride="borrowing" borrowingStatusOverride="completed" openReview={openReviewParam} />
+        <MyRentals perspectiveOverride="borrowing" borrowingStatusOverride="completed" />
       )}
 
       {tab === 'favorites' && (

@@ -36,6 +36,18 @@ export function ScheduleReturnStep({ rental, perspective, onSchedule }: Schedule
             ? 'Meet-up will be at your original pick-up location'
             : 'Meet-up will be at the original pick-up location'}
         </p>
+        {rental.meeting_time && (
+          <p className="text-xs text-blue-700 mt-1">
+            <span className="font-medium">Original pickup was scheduled for:</span>{' '}
+            {new Date(rental.meeting_time).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            })}
+          </p>
+        )}
       </div>
 
       <div className="mb-6">
@@ -73,105 +85,83 @@ export function ScheduleReturnStep({ rental, perspective, onSchedule }: Schedule
 interface InspectionStepProps {
   rental: Rental;
   perspective: 'borrower' | 'lender';
-  onInspection: (rentalId: string, notes: string) => void;
+  onInspection: (rentalId: string, notes: string, hasDamage?: boolean) => void;
 }
 
 export function InspectionStep({ rental, perspective, onInspection }: InspectionStepProps) {
   const [notes, setNotes] = useState('');
-  const [checklist, setChecklist] = useState({
-    condition: false,
-    damage: false,
-    components: false,
-    functionality: false
-  });
 
-  const allChecklistComplete = perspective === 'lender' || 
-    (checklist.condition && checklist.damage && checklist.components && checklist.functionality);
+  const handleAcceptReturn = () => {
+    // Item is in good condition
+    onInspection(String(rental.id), notes || 'Item returned in acceptable condition', false);
+  };
+
+  const handleReportDamage = () => {
+    console.log('handleReportDamage clicked - rental:', rental.id);
+    // Item has damage - this should trigger damage workflow
+    onInspection(String(rental.id), notes || 'Damage reported during inspection', true);
+  };
 
   return (
     <div>
       <h4 className="text-lg font-bold mb-4">
         {perspective === 'borrower' ? 'Step 2: Meet-Up & Inspection' : 'Step 2: Inspect Returned Item'}
       </h4>
-      <div className="bg-yellow-50 border-l-4 border-yellow-600 p-4 mb-4">
+      
+      <div className="bg-yellow-50 border-l-4 border-yellow-600 p-4 mb-6">
         <p className="text-sm font-medium text-yellow-900">
           <AlertCircle className="inline w-4 h-4 mr-2" />
           {perspective === 'borrower' 
-            ? `The owner must be present at ${rental.location}`
-            : `You must be present at ${rental.location} to inspect the returned item`}
+            ? `Meet the owner at ${rental.location} to return the item`
+            : `Inspect the returned item at ${rental.location}`}
         </p>
       </div>
 
-      <div className="space-y-4 mb-6">
-        <p className="text-sm text-gray-700">
-          Inspection checklist{perspective === 'borrower' ? ' (required):' : ':'}
-        </p>
-        <ul className="space-y-2 text-sm text-gray-600">
-          <li className="flex items-center gap-2">
-            <input 
-              type="checkbox" 
-              className="rounded" 
-              checked={checklist.condition}
-              onChange={e => setChecklist(prev => ({ ...prev, condition: e.target.checked }))}
-              disabled={perspective === 'lender'}
-            /> Check overall condition
-          </li>
-          <li className="flex items-center gap-2">
-            <input 
-              type="checkbox" 
-              className="rounded" 
-              checked={checklist.damage}
-              onChange={e => setChecklist(prev => ({ ...prev, damage: e.target.checked }))}
-              disabled={perspective === 'lender'}
-            /> Look for visible damage
-          </li>
-          <li className="flex items-center gap-2">
-            <input 
-              type="checkbox" 
-              className="rounded" 
-              checked={checklist.components}
-              onChange={e => setChecklist(prev => ({ ...prev, components: e.target.checked }))}
-              disabled={perspective === 'lender'}
-            /> Verify all components
-          </li>
-          <li className="flex items-center gap-2">
-            <input 
-              type="checkbox" 
-              className="rounded" 
-              checked={checklist.functionality}
-              onChange={e => setChecklist(prev => ({ ...prev, functionality: e.target.checked }))}
-              disabled={perspective === 'lender'}
-            /> Test functionality
-          </li>
-        </ul>
-      </div>
+      {perspective === 'lender' && (
+        <>
+          <div className="mb-6">
+            <label className="block text-sm font-bold mb-2">
+              Inspection Notes (Optional)
+            </label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Add any notes about the item condition..."
+              className="w-full p-3 border rounded-lg text-sm"
+              rows={3}
+            />
+          </div>
 
-      <div className="mb-6">
-        <label className="block text-sm font-bold mb-2">
-          {perspective === 'borrower' ? "Borrower's Notes" : "Owner's Notes"}
-        </label>
-        <textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          placeholder={perspective === 'borrower'
-            ? 'Describe the condition as you are returning it...'
-            : 'Record any observations about gear condition...'}
-          className="w-full p-3 border rounded-lg text-sm"
-          rows={4}
-        />
-      </div>
+          <div className="space-y-3">
+            <button
+              onClick={handleAcceptReturn}
+              className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 transition"
+            >
+              ✅ Item is in Good Condition
+            </button>
+            
+            <button
+              onClick={handleReportDamage}
+              className="w-full bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 transition"
+            >
+              ⚠️ Report Damage or Issues
+            </button>
+          </div>
+        </>
+      )}
 
-      <button
-        onClick={() => onInspection(String(rental.id), notes)}
-        disabled={!allChecklistComplete}
-        className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 disabled:bg-gray-400 transition"
-      >
-        Inspection Complete
-      </button>
-      {perspective === 'borrower' && !allChecklistComplete && (
-        <p className="text-xs text-red-600 mt-2 text-center">
-          Please complete all checklist items to continue
-        </p>
+      {perspective === 'borrower' && (
+        <div className="text-center">
+          <div className="mb-4">
+            <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-3">
+              <Clock className="w-8 h-8 text-blue-600" />
+            </div>
+            <h5 className="font-semibold text-gray-900 mb-2">Waiting for Lender</h5>
+            <p className="text-sm text-gray-600">
+              The lender is inspecting the returned item. You'll be notified of the results.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -254,6 +244,7 @@ export function PhotoUploadStep({ rental, perspective, onPhotoUpload }: PhotoUpl
 interface OwnerConfirmationStepProps {
   rental: Rental;
   perspective: 'borrower' | 'lender';
+  workflowState?: any; // Add missing workflowState prop
   photoUrl?: string;
   scheduledTime?: string;
   onConfirm: (rentalId: string, hasDamage: boolean, description?: string, photos?: string[]) => void;
@@ -263,6 +254,7 @@ interface OwnerConfirmationStepProps {
 export function OwnerConfirmationStep({
   rental,
   perspective,
+  workflowState,
   photoUrl,
   scheduledTime,
   onConfirm,
@@ -271,7 +263,7 @@ export function OwnerConfirmationStep({
   if (perspective === 'borrower') {
     return <BorrowerConfirmationStep rental={rental} photoUrl={photoUrl} onReadyForPickup={onReadyForPickup} />;
   }
-  return <LenderConfirmationStep rental={rental} photoUrl={photoUrl} scheduledTime={scheduledTime} onConfirm={onConfirm} />;
+  return <LenderConfirmationStep rental={rental} photoUrl={photoUrl} scheduledTime={scheduledTime} onConfirm={onConfirm} workflowState={workflowState} />;
 }
 
 interface BorrowerConfirmationStepProps {
@@ -343,10 +335,118 @@ function BorrowerConfirmationStep({
   );
 }
 
+// New step: Lender confirms the meeting time
+interface ConfirmMeetingStepProps {
+  rental: Rental;
+  perspective: 'borrower' | 'lender';
+  scheduledTime?: string;
+  onConfirmMeeting: (rentalId: string) => void;
+  onRequestDifferentTime?: (rentalId: string) => void;
+}
+
+export function ConfirmMeetingStep({
+  rental,
+  perspective,
+  scheduledTime,
+  onConfirmMeeting,
+  onRequestDifferentTime
+}: ConfirmMeetingStepProps) {
+  return (
+    <div>
+      <h4 className="text-lg font-bold mb-4">Confirm Return Meeting</h4>
+      
+      <div className="bg-blue-50 border-l-4 border-blue-600 p-4 mb-6">
+        <p className="text-sm font-medium text-blue-900 mb-1">
+          📅 Scheduled Return Time (chosen by borrower):
+        </p>
+        <p className="text-base font-bold text-blue-950">
+          {rental.return_time ? new Date(rental.return_time).toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          }) : (scheduledTime ? new Date(scheduledTime).toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          }) : 'Not scheduled')}
+        </p>
+        {rental.meeting_time && (
+          <>
+            <p className="text-sm font-medium text-blue-900 mb-1 mt-3">
+              📅 Original Pickup Time (for reference):
+            </p>
+            <p className="text-base font-bold text-blue-950">
+              {new Date(rental.meeting_time).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+              })}
+            </p>
+          </>
+        )}
+        <p className="text-xs text-blue-700 mt-2">
+          📍 Location: {rental.location}
+        </p>
+      </div>
+
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+        <p className="text-sm text-gray-700">
+          {perspective === 'lender' 
+            ? 'Review the proposed meeting time. You can confirm it or request a different time if it doesn\'t work for you.'
+            : 'By confirming this meeting, you agree to meet the lender at the scheduled time and location to return the item. The lender will be notified that you\'ve confirmed the meeting.'}
+        </p>
+      </div>
+
+      {perspective === 'lender' ? (
+        <div className="space-y-3">
+          <button
+            onClick={() => {
+              console.log('Confirm button clicked in component');
+              onConfirmMeeting(String(rental.id));
+            }}
+            className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 transition"
+          >
+            ✓ Confirm Meeting Time
+          </button>
+          
+          <button
+            onClick={() => {
+              console.log('Request different time button clicked in component');
+              onRequestDifferentTime?.(String(rental.id));
+            }}
+            className="w-full bg-amber-600 text-white py-3 rounded-lg font-bold hover:bg-amber-700 transition"
+          >
+            📅 Request Different Time
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => {
+            console.log('Confirm button clicked (borrower view)');
+            onConfirmMeeting(String(rental.id));
+          }}
+          className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 transition"
+        >
+          Confirm Meeting Time
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface LenderConfirmationStepProps {
   rental: Rental;
   photoUrl?: string;
   scheduledTime?: string;
+  workflowState?: any;
   onConfirm: (rentalId: string, hasDamage: boolean, description?: string, photos?: string[]) => void;
 }
 
@@ -354,10 +454,11 @@ function LenderConfirmationStep({
   rental,
   photoUrl,
   scheduledTime,
+  workflowState,
   onConfirm
 }: LenderConfirmationStepProps) {
-  const [hasDamage, setHasDamage] = useState(false);
-  const [damageDescription, setDamageDescription] = useState('');
+  const [hasDamage, setHasDamage] = useState(workflowState?.hasDamage || false);
+  const [damageDescription, setDamageDescription] = useState(workflowState?.inspectionNotes || '');
   const [damagePhotos, setDamagePhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
 
@@ -434,13 +535,23 @@ function LenderConfirmationStep({
       <h4 className="text-lg font-bold mb-4">Inspect & Confirm Receipt</h4>
 
       {/* Show borrower's scheduled time */}
-      <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-600 rounded">
+      <div className="bg-blue-50 border-l-4 border-blue-600 p-4 mb-4">
         <p className="text-sm font-medium text-blue-900 mb-1">
           📅 Scheduled Return Time (chosen by borrower):
         </p>
         <p className="text-base font-bold text-blue-950">
           {formatScheduledTime(scheduledTime)}
         </p>
+        {rental.meeting_time && (
+          <>
+            <p className="text-sm font-medium text-blue-900 mb-1 mt-3">
+              📅 Original Pickup Time (for reference):
+            </p>
+            <p className="text-base font-bold text-blue-950">
+              {formatScheduledTime(rental.meeting_time)}
+            </p>
+          </>
+        )}
         <p className="text-xs text-blue-700 mt-1">
           📍 Location: {rental.location}
         </p>

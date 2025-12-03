@@ -10,6 +10,7 @@ import { useUser } from '../context/UserContext';
 import LoadingSpinner from './LoadingSpinner';
 import RatingDisplay from './RatingDisplay';
 import ReviewSystem from './ReviewSystem';
+import { formatRentalDate } from '../lib/dateUtils';
 
 const gradientOptions = [
   { key: 'emerald', label: 'Emerald', colors: 'from-emerald-200 to-emerald-500' },
@@ -1524,12 +1525,5 @@ function extractYouTubeID(url: string) {
   return match ? match[1] : '';
 }
 
-function formatDate(dt: string | null) {
-  if (!dt) return '-';
-  try {
-    const d = new Date(dt);
-    return d.toLocaleDateString();
-  } catch {
-    return dt;
-  }
-}
+// Use the utility function from dateUtils
+const formatDate = formatRentalDate;

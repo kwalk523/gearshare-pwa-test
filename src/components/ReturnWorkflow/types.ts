@@ -13,6 +13,7 @@ export interface Rental {
   start_time: string;
   end_time: string;
   location: string;
+  meeting_time?: string | null;
   scheduled_return_time?: string | null;
   return_status?: string | null;
   deposit_amount?: number;
@@ -21,8 +22,11 @@ export interface Rental {
 }
 
 export interface ReturnWorkflowState {
-  step: 'schedule' | 'inspect' | 'photo' | 'confirm' | 'waiting' | 'dispute' | 'complete';
+  step: 'schedule' | 'confirm_meeting' | 'waiting_for_meeting' | 'inspect' | 'photo' | 'confirm' | 'waiting' | 'dispute' | 'complete';
   scheduledTime?: string;
+  scheduled_time?: string;
+  meetingConfirmed?: boolean;
+  hasDamage?: boolean;
   inspectionNotes?: string;
   returnPhotoUrl?: string;
   damagePhotos?: string[];

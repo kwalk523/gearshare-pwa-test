@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Clock, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
 import { useExtensions } from '../hooks/useExtensions';
+import { formatRentalDate } from '../lib/dateUtils';
 
 interface ExtensionManagerProps {
   rentalId: string;
@@ -114,7 +115,7 @@ export default function ExtensionManager({
               <div className="flex items-start justify-between mb-2">
                 <div>
                   <p className="text-sm font-medium">+{ext.additional_days} day{ext.additional_days > 1 ? 's' : ''}</p>
-                  <p className="text-xs text-gray-600">New end: {new Date(ext.new_end_time).toLocaleDateString()}</p>
+                  <p className="text-xs text-gray-600">New end: {formatRentalDate(ext.new_end_time)}</p>
                   <p className="text-xs text-gray-600">Cost: ${ext.extension_cost.toFixed(2)}</p>
                 </div>
                 <div>
